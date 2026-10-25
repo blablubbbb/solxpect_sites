@@ -502,7 +502,10 @@ class ArraySubentryFlow(ConfigSubentryFlow):
 
         def default(i: int, fallback: tuple[float, float]) -> str:
             e, o = stored[i]
-            return _direction_text(*fallback) if e is None else _direction_text(e, o)
+            # unreachable directions don't affect the result, so "no obstacle" there is shown as blocked
+            if e is None or (fallback == BLOCKED and e == 0):
+                return _direction_text(*fallback)
+            return _direction_text(e, o)
 
         fields: dict[Any, Any] = {
             vol.Optional(_direction_key(i), default=default(i, (0.0, 0.0))): str for i in reachable
