@@ -10,6 +10,7 @@ A Home Assistant integration that forecasts the output of PV installations with 
 - Two calculation modes: **sub-steps** (angle of incidence and shading averaged every 7.5 minutes) or **like the app** (identical to solXpect).
 - **Import from the solXpect app**: upload the app's backup ZIP and choose the plants.
 - Forecast in the **Energy dashboard** (as solar forecast of the site).
+- Shading input like in the app: one row per 10° direction. Directions where the sun never stands in front of the panel are prefilled as blocked; the others show the highest sun elevation there.
 
 ## Installation
 
@@ -32,7 +33,7 @@ Each panel array asks for:
 | Cooling factor | Cell temperature = air temperature + factor × irradiance. Default 0.0342 ("not so well cooled", as in the app); see the [library README](https://github.com/blablubbbb/solXpect_meets_python) for typical values per mounting |
 | Diffuse light efficiency | Default follows from the tilt |
 | Albedo | Ground reflectivity: grass ~0.2, asphalt ~0.1, snow 0.6–0.8 |
-| Shading | 36 values each for the directions 0°, 10°, … 350°: obstacle elevation (°) and opacity (%) |
+| Shading | Per 10° direction: obstacle elevation and opacity as `elevation/opacity`, e.g. `35/100` (a single number means opaque, `0` no obstacle). Only directions the sun can reach in front of the panel are shown; the rest are prefilled as blocked |
 
 ## Sensors
 

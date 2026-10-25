@@ -20,6 +20,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 
 from .const import (
@@ -54,6 +55,7 @@ from .const import (
     SUBENTRY_INVERTER,
 )
 from .model import data_from_array
+from .solxpect.PanelArray import maxSunElevationPerBin
 from .solxpect.SolarPowerPlant import SolarPowerPlant
 from .solxpect.app_import import read_app_plants, sites_from_app_plants
 
@@ -312,19 +314,37 @@ class InverterSubentryFlow(ConfigSubentryFlow):
         )
 
 
-def _parse_shading(text: str, maximum: float) -> list[float]:
-    values = [float(v) for v in str(text).replace(";", ",").split(",") if v.strip()]
-    if len(values) != SHADING_BINS or any(v < 0 or v > maximum for v in values):
+SECTION_UNREACHABLE = "unreachable"
+BLOCKED = (90.0, 100.0)  # prefilled for directions the sun can't reach in front of the panel
+
+
+def _direction_key(index: int) -> str:
+    """Field name of a shading direction, e.g. "dir_170" for 170–180°."""
+    return f"dir_{index * 10:03d}"
+
+
+def _parse_direction(text: str) -> tuple[float, float]:
+    """Parse "elevation/opacity"; a single number means an opaque obstacle, empty means none."""
+    parts = [p for p in str(text).replace(";", "/").replace(" ", "/").split("/") if p]
+    if not parts:
+        return 0.0, 0.0
+    if len(parts) > 2:
         raise ValueError
-    return values
+    elevation = float(parts[0])
+    opacity = float(parts[1]) if len(parts) == 2 else (100.0 if elevation > 0 else 0.0)
+    if not 0 <= elevation <= 90 or not 0 <= opacity <= 100:
+        raise ValueError
+    return elevation, opacity
 
 
-def _shading_text(values: list[float]) -> str:
-    return ",".join(f"{v:g}" for v in values)
+def _direction_text(elevation: float, opacity: float) -> str:
+    if elevation == 0:
+        return "0"
+    return f"{elevation:g}" if opacity == 100 else f"{elevation:g}/{opacity:g}"
 
 
 class ArraySubentryFlow(ConfigSubentryFlow):
-    """Add or change a panel array, in two steps: basics, then details."""
+    """Add or change a panel array, in three steps: basics, details, shading."""
 
     def __init__(self) -> None:
         """Initialize the flow."""
@@ -406,29 +426,16 @@ class ArraySubentryFlow(ConfigSubentryFlow):
         )
 
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        """Panel size, thermal and optical values, shading."""
-        errors: dict[str, str] = {}
+        """Panel size, thermal and optical values."""
         uses_area = self._data[CONF_SIZE_MODE] == "area"
         if user_input is not None:
-            data = {**self._data, **user_input}
-            try:
-                data[CONF_SHADING_ELEVATION] = _parse_shading(user_input[CONF_SHADING_ELEVATION], 90)
-            except ValueError:
-                errors[CONF_SHADING_ELEVATION] = "invalid_shading"
-            try:
-                data[CONF_SHADING_OPACITY] = _parse_shading(user_input[CONF_SHADING_OPACITY], 100)
-            except ValueError:
-                errors[CONF_SHADING_OPACITY] = "invalid_shading"
-            if not errors:
-                if uses_area:
-                    data[CONF_CELLS_MAX_POWER] = 0
-                else:
-                    data[CONF_CELLS_AREA] = 0
-                    data[CONF_CELLS_EFFICIENCY] = 0
-                subentry = self._subentry()
-                if subentry is None:
-                    return self.async_create_entry(title=self._name, data=data)
-                return self.async_update_and_abort(self._get_entry(), subentry, title=self._name, data=data)
+            self._data.update(user_input)
+            if uses_area:
+                self._data[CONF_CELLS_MAX_POWER] = 0
+            else:
+                self._data[CONF_CELLS_AREA] = 0
+                self._data[CONF_CELLS_EFFICIENCY] = 0
+            return await self.async_step_shading()
 
         d = self._data
         tilt = d[CONF_TILT]
@@ -447,14 +454,70 @@ class ArraySubentryFlow(ConfigSubentryFlow):
                     default=d.get(CONF_DIFFUSE_EFFICIENCY, SolarPowerPlant.calcDiffuseEfficiency(tilt)),
                 ): _number(0, 100, unit="%"),
                 vol.Required(CONF_ALBEDO, default=d.get(CONF_ALBEDO, DEFAULT_ALBEDO)): _number(0, 1),
-                vol.Required(
-                    CONF_SHADING_ELEVATION,
-                    default=_shading_text(d.get(CONF_SHADING_ELEVATION, [0] * SHADING_BINS)),
-                ): str,
-                vol.Required(
-                    CONF_SHADING_OPACITY,
-                    default=_shading_text(d.get(CONF_SHADING_OPACITY, [0] * SHADING_BINS)),
-                ): str,
             }
         )
-        return self.async_show_form(step_id="details", data_schema=vol.Schema(fields), errors=errors)
+        return self.async_show_form(step_id="details", data_schema=vol.Schema(fields))
+
+    async def async_step_shading(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Obstacle elevation and opacity per 10° direction, like the table in the app.
+
+        Directions where the sun never stands in front of the panel are prefilled as
+        blocked and shown collapsed; the others show the highest sun elevation there.
+        """
+        latitude = self._get_entry().data[CONF_LATITUDE]
+        highest = await self.hass.async_add_executor_job(
+            maxSunElevationPerBin, latitude, self._data[CONF_AZIMUTH], self._data[CONF_TILT]
+        )
+        reachable = [i for i in range(SHADING_BINS) if highest[i] is not None]
+        unreachable = [i for i in range(SHADING_BINS) if highest[i] is None]
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            texts = {**user_input.pop(SECTION_UNREACHABLE, {}), **user_input}
+            elevation: list[float] = []
+            opacity: list[float] = []
+            for i in range(SHADING_BINS):
+                try:
+                    e, o = _parse_direction(texts.get(_direction_key(i), ""))
+                except ValueError:
+                    # errors inside the collapsed section are shown for the whole form
+                    errors[_direction_key(i) if i in reachable else "base"] = "invalid_direction"
+                    continue
+                elevation.append(e)
+                opacity.append(o)
+            if not errors:
+                data = {**self._data, CONF_SHADING_ELEVATION: elevation, CONF_SHADING_OPACITY: opacity}
+                subentry = self._subentry()
+                if subentry is None:
+                    return self.async_create_entry(title=self._name, data=data)
+                return self.async_update_and_abort(self._get_entry(), subentry, title=self._name, data=data)
+
+        stored = list(
+            zip(
+                self._data.get(CONF_SHADING_ELEVATION) or [None] * SHADING_BINS,
+                self._data.get(CONF_SHADING_OPACITY) or [None] * SHADING_BINS,
+                strict=True,
+            )
+        )
+
+        def default(i: int, fallback: tuple[float, float]) -> str:
+            e, o = stored[i]
+            return _direction_text(*fallback) if e is None else _direction_text(e, o)
+
+        fields: dict[Any, Any] = {
+            vol.Optional(_direction_key(i), default=default(i, (0.0, 0.0))): str for i in reachable
+        }
+        if unreachable:
+            fields[vol.Required(SECTION_UNREACHABLE)] = section(
+                vol.Schema(
+                    {vol.Optional(_direction_key(i), default=default(i, BLOCKED)): str for i in unreachable}
+                ),
+                {"collapsed": True},
+            )
+        sun = "\n".join(f"- {i * 10}–{i * 10 + 10}°: up to {highest[i]:.0f}°" for i in reachable)
+        return self.async_show_form(
+            step_id="shading",
+            data_schema=vol.Schema(fields),
+            errors=errors,
+            description_placeholders={"sun": sun or "-"},
+        )

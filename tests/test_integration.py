@@ -16,7 +16,6 @@ from custom_components.solxpect_sites.energy import async_get_solar_forecast
 
 from .conftest import LATITUDE, LONGITUDE, app_row, make_app_backup
 
-SHADING = ",".join(["0"] * 36)
 FILE_ID = "0123456789abcdef0123456789abcdef"
 
 
@@ -42,7 +41,9 @@ async def _add_inverter(hass, entry, name="Deye", limit=8000):
     )
 
 
-async def _add_array(hass, entry, inverter_uid, name="South", power=6000, shading=SHADING):
+async def _add_array(hass, entry, inverter_uid, name="South", power=6000, shading=None,
+                     azimuth=180, tilt=30):
+    """Run the three steps; shading maps field names to texts (defaults are kept otherwise)."""
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, "array"), context={"source": config_entries.SOURCE_USER}
     )
@@ -50,17 +51,33 @@ async def _add_array(hass, entry, inverter_uid, name="South", power=6000, shadin
         return result
     result = await hass.config_entries.subentries.async_configure(
         result["flow_id"],
-        {"name": name, "inverter": inverter_uid, "size_mode": "power", "azimuth": 180, "tilt": 30},
+        {"name": name, "inverter": inverter_uid, "size_mode": "power", "azimuth": azimuth, "tilt": tilt},
     )
     assert result["step_id"] == "details"
-    return await hass.config_entries.subentries.async_configure(
+    result = await hass.config_entries.subentries.async_configure(
         result["flow_id"],
         {
             "cells_max_power": power, "temp_coeff": -0.3, "cooling_factor": 0.024,
             "diffuse_efficiency": 93, "albedo": 0.18,
-            "shading_elevation": shading, "shading_opacity": shading,
         },
     )
+    assert result["step_id"] == "shading"
+    return await hass.config_entries.subentries.async_configure(
+        result["flow_id"], _shading_input(result, shading or {})
+    )
+
+
+def _shading_input(result, changes):
+    """The shading form's defaults (incl. the collapsed section) with some fields changed."""
+    values = {}
+    for field in result["data_schema"].schema:
+        key = str(field)
+        if key == "unreachable":
+            inner = result["data_schema"].schema[field].schema.schema
+            values[key] = {str(f): changes.get(str(f), f.default()) for f in inner}
+        else:
+            values[key] = changes.get(key, field.default())
+    return values
 
 
 def _inverter_uid(entry, name):
@@ -121,9 +138,12 @@ async def test_shared_limit_and_second_inverter(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
     data = entry.runtime_data.data
-    assert data.power["Deye"].max() == 2000
-    assert data.power["Micro"].max() < 800
-    assert (data.power["total"] == data.power["Deye"] + data.power["Micro"]).all()
+    assert max(data.power["Deye"]) == 2000
+    assert max(data.power["Micro"]) < 800
+    assert all(
+        t == d + m
+        for t, d, m in zip(data.power["total"], data.power["Deye"], data.power["Micro"], strict=True)
+    )
     total = float(hass.states.get("sensor.home_energy_tomorrow").state)
     parts = float(hass.states.get("sensor.deye_energy_tomorrow").state) + float(
         hass.states.get("sensor.micro_energy_tomorrow").state
@@ -143,15 +163,68 @@ async def test_quarter_hour_site(hass: HomeAssistant) -> None:
     assert len(forecast["wh_hours"]) == 48
 
 
-async def test_array_validation_and_reconfigure(hass: HomeAssistant) -> None:
-    """Shading needs 36 values; reconfiguring an array changes the forecast."""
+async def test_shading_step_lists_reachable_directions(hass: HomeAssistant) -> None:
+    """A vertical facade: directions behind it are prefilled as blocked and collapsed."""
     entry = await _create_site(hass)
     await _add_inverter(hass, entry)
     await hass.async_block_till_done()
     uid = _inverter_uid(entry, "Deye")
-    result = await _add_array(hass, entry, uid, shading="0,0,0")
-    assert result["errors"] == {"shading_elevation": "invalid_shading", "shading_opacity": "invalid_shading"}
 
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "array"), context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"name": "Facade", "inverter": uid, "size_mode": "power", "azimuth": 171, "tilt": 90}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {"cells_max_power": 6160, "temp_coeff": -0.3, "cooling_factor": 0.024, "diffuse_efficiency": 50, "albedo": 0.18},
+    )
+    assert result["step_id"] == "shading"
+    visible = [str(f) for f in result["data_schema"].schema if str(f) != "unreachable"]
+    assert visible[0] == "dir_080" and visible[-1] == "dir_260"   # sun in front: 81°-261°
+    hidden = result["data_schema"].schema["unreachable"].schema.schema
+    assert all(f.default() == "90" for f in hidden)
+    assert "170–180°: up to 60°" in result["description_placeholders"]["sun"]
+
+    bad = _shading_input(result, {"dir_150": "35/120"})
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], bad)
+    assert result["errors"] == {"dir_150": "invalid_direction"}
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], _shading_input(result, {"dir_150": "35", "dir_180": "45/60", "dir_200": ""})
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    data = next(s for s in entry.subentries.values() if s.title == "Facade").data
+    assert (data["shading_elevation"][15], data["shading_opacity"][15]) == (35, 100)
+    assert (data["shading_elevation"][18], data["shading_opacity"][18]) == (45, 60)
+    assert (data["shading_elevation"][20], data["shading_opacity"][20]) == (0, 0)
+    assert (data["shading_elevation"][0], data["shading_opacity"][0]) == (90, 100)   # behind
+    await hass.async_block_till_done()
+
+    # reconfiguring shows the stored values again
+    facade = next(s for s in entry.subentries.values() if s.title == "Facade")
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "array"),
+        context={"source": config_entries.SOURCE_RECONFIGURE, "subentry_id": facade.subentry_id},
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"name": "Facade", "inverter": uid, "size_mode": "power", "azimuth": 171, "tilt": 90}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {"cells_max_power": 6160, "temp_coeff": -0.3, "cooling_factor": 0.024, "diffuse_efficiency": 50, "albedo": 0.18},
+    )
+    defaults = {str(f): f.default() for f in result["data_schema"].schema if str(f) != "unreachable"}
+    assert (defaults["dir_150"], defaults["dir_180"], defaults["dir_200"]) == ("35", "45/60", "0")
+
+
+async def test_array_reconfigure(hass: HomeAssistant) -> None:
+    """Reconfiguring an array changes the forecast."""
+    entry = await _create_site(hass)
+    await _add_inverter(hass, entry)
+    await hass.async_block_till_done()
+    uid = _inverter_uid(entry, "Deye")
     await _add_array(hass, entry, uid, power=3000)
     await hass.async_block_till_done()
     before = float(hass.states.get("sensor.deye_energy_tomorrow").state)
@@ -168,9 +241,10 @@ async def test_array_validation_and_reconfigure(hass: HomeAssistant) -> None:
         result["flow_id"],
         {
             "cells_area": 30, "cells_efficiency": 20, "temp_coeff": -0.3, "cooling_factor": 0.024,
-            "diffuse_efficiency": 93, "albedo": 0.18, "shading_elevation": SHADING, "shading_opacity": SHADING,
+            "diffuse_efficiency": 93, "albedo": 0.18,
         },
     )
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], _shading_input(result, {}))
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "reconfigure_successful"
     await hass.async_block_till_done()
     array = entry.subentries[array.subentry_id]

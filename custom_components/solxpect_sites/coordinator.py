@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 
-import pandas as pd
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -15,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_INTERVAL, DOMAIN, UPDATE_INTERVAL
 from .model import site_from_entry
+from .solxpect.Site import Site
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,21 +22,24 @@ type SolxpectSitesConfigEntry = ConfigEntry[SolxpectSitesCoordinator]
 
 @dataclass
 class ForecastData:
-    """Forecast of one site.
+    """Forecast of one site, as plain Python values (no pandas in the event loop).
 
-    power: one row per interval, indexed by the start of the interval (UTC),
-    mean power in W. Columns: "<inverter>/<array>" (DC), "<inverter>" (AC), "total" (AC).
+    starts: start of each interval (UTC). power: mean power in W per interval for
+    each column: "<inverter>/<array>" (DC), "<inverter>" (AC), "total" (AC).
     """
 
-    power: pd.DataFrame
+    starts: list[datetime]
+    power: dict[str, list[float]]
     interval: timedelta
 
     def wh_periods(self, column: str, start: datetime, end: datetime) -> dict[datetime, float]:
         """Energy (Wh) per interval starting in [start, end)."""
-        series = self.power[column]
-        series = series[(series.index >= start) & (series.index < end)]
         hours = self.interval / timedelta(hours=1)
-        return {ts.to_pydatetime(): float(w) * hours for ts, w in series.items()}
+        return {
+            s: w * hours
+            for s, w in zip(self.starts, self.power[column], strict=True)
+            if start <= s < end
+        }
 
     def energy(self, column: str, start: datetime, end: datetime) -> float:
         """Energy (Wh) of the intervals starting in [start, end)."""
@@ -45,9 +47,22 @@ class ForecastData:
 
     def power_at(self, column: str, moment: datetime) -> float | None:
         """Mean power (W) of the interval containing moment."""
-        series = self.power[column]
-        series = series[(series.index <= moment) & (series.index + self.interval > moment)]
-        return float(series.iloc[0]) if len(series) else None
+        for s, w in zip(self.starts, self.power[column], strict=True):
+            if s <= moment < s + self.interval:
+                return w
+        return None
+
+
+def _calculate(site: Site, start: datetime, end: datetime, interval: timedelta) -> ForecastData:
+    """Fetch the weather and calculate the site (runs in the executor)."""
+    power = site.forecast(start, end, int(interval.total_seconds()))
+    # the library labels intervals by their end; HA and the sensors use the start
+    starts = [ts.to_pydatetime() - interval for ts in power.index]
+    return ForecastData(
+        starts=starts,
+        power={column: [float(w) for w in power[column]] for column in power.columns},
+        interval=interval,
+    )
 
 
 class SolxpectSitesCoordinator(DataUpdateCoordinator[ForecastData]):
@@ -71,16 +86,9 @@ class SolxpectSitesCoordinator(DataUpdateCoordinator[ForecastData]):
         """Fetch the weather from today 00:00 to the day after tomorrow 00:00 (local time)."""
         start = dt_util.start_of_local_day()
         end = dt_util.start_of_local_day(start.date() + timedelta(days=2))
-        interval_seconds = int(self.interval.total_seconds())
         try:
-            power = await self.hass.async_add_executor_job(
-                self.site.forecast,
-                dt_util.as_utc(start),
-                dt_util.as_utc(end),
-                interval_seconds,
+            return await self.hass.async_add_executor_job(
+                _calculate, self.site, dt_util.as_utc(start), dt_util.as_utc(end), self.interval
             )
         except Exception as err:  # requests, pandas and pvlib raise many kinds of errors
             raise UpdateFailed(f"Forecast for {self.config_entry.title} failed: {err}") from err
-        # the library labels intervals by their end; HA and the sensors use the start
-        power.index = power.index - self.interval
-        return ForecastData(power=power, interval=self.interval)

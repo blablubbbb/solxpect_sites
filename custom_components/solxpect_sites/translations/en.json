@@ -135,24 +135,105 @@
             "temp_coeff": "Temperature coefficient of power",
             "cooling_factor": "Cooling factor",
             "diffuse_efficiency": "Diffuse light efficiency",
-            "albedo": "Ground reflectivity (albedo)",
-            "shading_elevation": "Shading: obstacle elevation per direction",
-            "shading_opacity": "Shading: obstacle opacity per direction"
+            "albedo": "Ground reflectivity (albedo)"
           },
           "data_description": {
             "cells_max_power": "Sum of the panels' rated power (Wp) from the datasheet.",
             "temp_coeff": "From the datasheet, e.g. -0.30 %/°C.",
             "cooling_factor": "Cell temperature = air temperature + factor × irradiance. Typical values: well cooled 0.020, free standing 0.0208, flat on roof 0.026, not so well cooled 0.0342 (default, as in the app), transparent PV 0.0455, facade integrated 0.0538, on sloped roof 0.0563. Modern high-efficiency panels run somewhat cooler.",
             "diffuse_efficiency": "Share of the diffuse sky light the panels receive; the default follows from the tilt.",
-            "albedo": "Grass about 0.2, asphalt about 0.1, fresh snow 0.6–0.8.",
-            "shading_elevation": "36 comma-separated values for the directions 0°, 10°, … 350° (north, clockwise): the sun is shaded while it is lower than this elevation (°).",
-            "shading_opacity": "36 comma-separated values: how much of the direct light the obstacle blocks (0–100 %)."
+            "albedo": "Grass about 0.2, asphalt about 0.1, fresh snow 0.6–0.8."
+          }
+        },
+        "shading": {
+          "title": "Shading",
+          "description": "For each direction (0° = north, 90° = east, 180° = south): the elevation of obstacles in degrees, and how much of the direct light they block in %, written as **elevation/opacity**, e.g. `35/100` or `20/60`. A single number means an opaque obstacle (`35` = `35/100`); `0` means no obstacle.\n\nOnly directions where the sun can stand in front of the panel are listed. The highest sun elevation there during the year (obstacles above it don't matter):\n{sun}\n\nThe other directions are prefilled as blocked (`90`) in the collapsed section.",
+          "data": {
+            "dir_000": "0–10° (N)",
+            "dir_010": "10–20° (N)",
+            "dir_020": "20–30° (NE)",
+            "dir_030": "30–40° (NE)",
+            "dir_040": "40–50° (NE)",
+            "dir_050": "50–60° (NE)",
+            "dir_060": "60–70° (NE)",
+            "dir_070": "70–80° (E)",
+            "dir_080": "80–90° (E)",
+            "dir_090": "90–100° (E)",
+            "dir_100": "100–110° (E)",
+            "dir_110": "110–120° (SE)",
+            "dir_120": "120–130° (SE)",
+            "dir_130": "130–140° (SE)",
+            "dir_140": "140–150° (SE)",
+            "dir_150": "150–160° (SE)",
+            "dir_160": "160–170° (S)",
+            "dir_170": "170–180° (S)",
+            "dir_180": "180–190° (S)",
+            "dir_190": "190–200° (S)",
+            "dir_200": "200–210° (SW)",
+            "dir_210": "210–220° (SW)",
+            "dir_220": "220–230° (SW)",
+            "dir_230": "230–240° (SW)",
+            "dir_240": "240–250° (SW)",
+            "dir_250": "250–260° (W)",
+            "dir_260": "260–270° (W)",
+            "dir_270": "270–280° (W)",
+            "dir_280": "280–290° (W)",
+            "dir_290": "290–300° (NW)",
+            "dir_300": "300–310° (NW)",
+            "dir_310": "310–320° (NW)",
+            "dir_320": "320–330° (NW)",
+            "dir_330": "330–340° (NW)",
+            "dir_340": "340–350° (N)",
+            "dir_350": "350–360° (N)"
+          },
+          "sections": {
+            "unreachable": {
+              "name": "Directions the sun can't reach in front of the panel",
+              "data": {
+                "dir_000": "0–10° (N)",
+                "dir_010": "10–20° (N)",
+                "dir_020": "20–30° (NE)",
+                "dir_030": "30–40° (NE)",
+                "dir_040": "40–50° (NE)",
+                "dir_050": "50–60° (NE)",
+                "dir_060": "60–70° (NE)",
+                "dir_070": "70–80° (E)",
+                "dir_080": "80–90° (E)",
+                "dir_090": "90–100° (E)",
+                "dir_100": "100–110° (E)",
+                "dir_110": "110–120° (SE)",
+                "dir_120": "120–130° (SE)",
+                "dir_130": "130–140° (SE)",
+                "dir_140": "140–150° (SE)",
+                "dir_150": "150–160° (SE)",
+                "dir_160": "160–170° (S)",
+                "dir_170": "170–180° (S)",
+                "dir_180": "180–190° (S)",
+                "dir_190": "190–200° (S)",
+                "dir_200": "200–210° (SW)",
+                "dir_210": "210–220° (SW)",
+                "dir_220": "220–230° (SW)",
+                "dir_230": "230–240° (SW)",
+                "dir_240": "240–250° (SW)",
+                "dir_250": "250–260° (W)",
+                "dir_260": "260–270° (W)",
+                "dir_270": "270–280° (W)",
+                "dir_280": "280–290° (W)",
+                "dir_290": "290–300° (NW)",
+                "dir_300": "300–310° (NW)",
+                "dir_310": "310–320° (NW)",
+                "dir_320": "320–330° (NW)",
+                "dir_330": "330–340° (NW)",
+                "dir_340": "340–350° (N)",
+                "dir_350": "350–360° (N)"
+              }
+            }
           }
         }
       },
       "error": {
         "name_exists": "This inverter already has an array with this name.",
-        "invalid_shading": "Enter exactly 36 comma-separated numbers in the allowed range."
+        "invalid_direction": "Use elevation/opacity, e.g. 35/100: elevation 0–90°, opacity 0–100 %."
       },
       "abort": {
         "no_inverters": "Add an inverter to the site first."

@@ -23,8 +23,10 @@ async def async_get_solar_forecast(
     data = coordinator.data
 
     hourly: dict[str, float] = {}
-    start = data.power.index.min()
-    end = data.power.index.max() + data.interval
+    if not data.starts:
+        return {"wh_hours": {}}
+    start = data.starts[0]
+    end = data.starts[-1] + data.interval
     for period_start, wh in data.wh_periods(TOTAL, start, end).items():
         hour = period_start.replace(minute=0, second=0, microsecond=0)
         key = dt_util.as_local(hour).isoformat()
