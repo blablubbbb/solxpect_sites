@@ -1,0 +1,198 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a PV site",
+        "menu_options": {
+          "manual": "Set up manually",
+          "import_app": "Import from a solXpect app backup"
+        }
+      },
+      "manual": {
+        "title": "PV site",
+        "description": "A site is one location. After creating it, add its inverters and then its panel arrays.",
+        "data": {
+          "name": "Name",
+          "latitude": "Latitude",
+          "longitude": "Longitude",
+          "interval": "Forecast interval",
+          "beam_mode": "Calculation"
+        },
+        "data_description": {
+          "interval": "15 minutes uses Open-Meteo's 15-minute data (native in Central Europe).",
+          "beam_mode": "\"Sub-steps\" averages sun angle and shading every 7.5 minutes; \"Like the app\" calculates exactly as solXpect does."
+        }
+      },
+      "import_app": {
+        "title": "Import from solXpect",
+        "description": "Upload the backup ZIP that the solXpect app exports (it contains databases/SQLITE.db).",
+        "data": {
+          "file": "Backup file"
+        }
+      },
+      "import_select": {
+        "title": "Choose the plants",
+        "description": "Plants without \"central inverter\" get their own inverter; plants with \"central inverter\" share one inverter whose limit is the sum of their limits. All chosen plants must have the same location. If the plants in the app are alternative variants of the same installation, choose only one.",
+        "data": {
+          "plants": "Plants",
+          "name": "Site name",
+          "interval": "Forecast interval",
+          "beam_mode": "Calculation"
+        }
+      },
+      "reconfigure": {
+        "title": "Change the site",
+        "data": {
+          "name": "Name",
+          "latitude": "Latitude",
+          "longitude": "Longitude",
+          "interval": "Forecast interval",
+          "beam_mode": "Calculation"
+        }
+      }
+    },
+    "error": {
+      "invalid_backup": "This file couldn't be read as a solXpect backup.",
+      "different_locations": "The chosen plants have different locations. Import them as separate sites."
+    },
+    "create_entry": {
+      "size_conflict": "Some plants had a rated power that doesn't match area × efficiency. As in the app, area × efficiency is used:\n{conflicts}\n\nChange the arrays to \"rated power\" if that is the correct value."
+    },
+    "abort": {
+      "reconfigure_successful": "The site was changed."
+    }
+  },
+  "config_subentries": {
+    "inverter": {
+      "entry_type": "Inverter",
+      "initiate_flow": {
+        "user": "Add inverter",
+        "reconfigure": "Change inverter"
+      },
+      "step": {
+        "user": {
+          "title": "Inverter",
+          "data": {
+            "name": "Name",
+            "efficiency": "Efficiency",
+            "power_limit": "AC power limit"
+          },
+          "data_description": {
+            "power_limit": "The inverter limits the summed power of all its arrays to this value."
+          }
+        },
+        "reconfigure": {
+          "title": "Inverter",
+          "data": {
+            "name": "Name",
+            "efficiency": "Efficiency",
+            "power_limit": "AC power limit"
+          }
+        }
+      },
+      "error": {
+        "name_exists": "An inverter with this name already exists."
+      }
+    },
+    "array": {
+      "entry_type": "Panel array",
+      "initiate_flow": {
+        "user": "Add panel array",
+        "reconfigure": "Change panel array"
+      },
+      "step": {
+        "user": {
+          "title": "Panel array",
+          "description": "A group of panels with the same orientation, e.g. one string.",
+          "data": {
+            "name": "Name",
+            "inverter": "Inverter",
+            "size_mode": "Panel size given as",
+            "azimuth": "Azimuth",
+            "tilt": "Tilt"
+          },
+          "data_description": {
+            "azimuth": "Direction the panels face: 0 = north, 90 = east, 180 = south, 270 = west.",
+            "tilt": "0 = horizontal, 90 = vertical."
+          }
+        },
+        "reconfigure": {
+          "title": "Panel array",
+          "data": {
+            "name": "Name",
+            "inverter": "Inverter",
+            "size_mode": "Panel size given as",
+            "azimuth": "Azimuth",
+            "tilt": "Tilt"
+          }
+        },
+        "details": {
+          "title": "Panel details",
+          "data": {
+            "cells_max_power": "Rated power",
+            "cells_area": "Cell area",
+            "cells_efficiency": "Cell efficiency",
+            "temp_coeff": "Temperature coefficient of power",
+            "cooling_factor": "Cooling factor",
+            "diffuse_efficiency": "Diffuse light efficiency",
+            "albedo": "Ground reflectivity (albedo)",
+            "shading_elevation": "Shading: obstacle elevation per direction",
+            "shading_opacity": "Shading: obstacle opacity per direction"
+          },
+          "data_description": {
+            "cells_max_power": "Sum of the panels' rated power (Wp) from the datasheet.",
+            "temp_coeff": "From the datasheet, e.g. -0.30 %/°C.",
+            "cooling_factor": "Cell temperature = air temperature + factor × irradiance. Typical values: well cooled 0.020, free standing 0.0208, flat on roof 0.026, not so well cooled 0.0342 (default, as in the app), transparent PV 0.0455, facade integrated 0.0538, on sloped roof 0.0563. Modern high-efficiency panels run somewhat cooler.",
+            "diffuse_efficiency": "Share of the diffuse sky light the panels receive; the default follows from the tilt.",
+            "albedo": "Grass about 0.2, asphalt about 0.1, fresh snow 0.6–0.8.",
+            "shading_elevation": "36 comma-separated values for the directions 0°, 10°, … 350° (north, clockwise): the sun is shaded while it is lower than this elevation (°).",
+            "shading_opacity": "36 comma-separated values: how much of the direct light the obstacle blocks (0–100 %)."
+          }
+        }
+      },
+      "error": {
+        "name_exists": "This inverter already has an array with this name.",
+        "invalid_shading": "Enter exactly 36 comma-separated numbers in the allowed range."
+      },
+      "abort": {
+        "no_inverters": "Add an inverter to the site first."
+      }
+    }
+  },
+  "selector": {
+    "interval": {
+      "options": {
+        "60": "Hourly",
+        "15": "15 minutes"
+      }
+    },
+    "beam_mode": {
+      "options": {
+        "substep": "Sub-steps (more accurate)",
+        "app": "Like the app"
+      }
+    },
+    "size_mode": {
+      "options": {
+        "power": "Rated power (Wp)",
+        "area": "Area and efficiency"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power_now": {
+        "name": "Power now"
+      },
+      "energy_today": {
+        "name": "Energy today"
+      },
+      "energy_today_remaining": {
+        "name": "Energy remaining today"
+      },
+      "energy_tomorrow": {
+        "name": "Energy tomorrow"
+      }
+    }
+  }
+}
