@@ -19,10 +19,11 @@ SUBENTRY_INVERTER = "inverter"
 SUBENTRY_ARRAY = "array"
 
 # Inverter subentry
+CONF_SITE = "site"  # only in the change form: entry_id of the site to move the inverter to
 CONF_EFFICIENCY = "efficiency"  # %
 CONF_POWER_LIMIT = "power_limit"  # W, AC
 
-# Array subentry
+# Array subentry; its title is "<inverter> › <name>", so HA lists the arrays grouped by inverter
 CONF_INVERTER = "inverter"  # unique_id of the inverter subentry
 CONF_SIZE_MODE = "size_mode"  # "power" or "area"
 CONF_CELLS_MAX_POWER = "cells_max_power"  # Wp

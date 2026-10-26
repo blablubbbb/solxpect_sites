@@ -95,7 +95,8 @@ async def async_setup_entry(
         identifiers={(DOMAIN, entry.entry_id)},
         name=entry.title,
         manufacturer="SolXpect",
-        model="Site",
+        # HA lists this device under "devices that don't belong to a sub-entry"
+        model="Total of all inverters",
         entry_type=DeviceEntryType.SERVICE,
     )
     # the inverter devices are linked to the site device by its registry id

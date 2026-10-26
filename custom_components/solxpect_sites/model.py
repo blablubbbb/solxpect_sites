@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE, CONF_NAME
+from homeassistant.core import HomeAssistant, callback
 
 from .const import (
     CONF_ALBEDO,
@@ -34,6 +35,51 @@ from .solxpect.Site import Site
 
 _LOGGER = logging.getLogger(__name__)
 
+SEPARATOR = " › "
+NO_INVERTER = "(no inverter)"
+
+
+def array_name(subentry: ConfigSubentry) -> str:
+    """The array's own name: its title without the "<inverter> › " prefix.
+
+    HA's "Rename" and renaming the inverter change the title, so the stored
+    name only counts while the title still ends with it.
+    """
+    stored = subentry.data.get(CONF_NAME)
+    if stored is not None and subentry.title.endswith(f"{SEPARATOR}{stored}"):
+        return stored
+    return subentry.title.rsplit(SEPARATOR, 1)[-1]
+
+
+def array_title(inverter_title: str | None, name: str) -> str:
+    """Title of an array subentry; HA sorts by title, so arrays are grouped by inverter."""
+    return f"{inverter_title or NO_INVERTER}{SEPARATOR}{name}"
+
+
+def inverter_titles(entry: ConfigEntry) -> dict[str, str]:
+    """Inverter titles of a site by the inverter's unique_id."""
+    return {
+        s.unique_id: s.title
+        for s in entry.subentries.values()
+        if s.subentry_type == SUBENTRY_INVERTER
+    }
+
+
+@callback
+def sync_array_titles(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Store each array's name and prefix its title with its inverter's current name."""
+    inverters = inverter_titles(entry)
+    for subentry in list(entry.subentries.values()):
+        if subentry.subentry_type != SUBENTRY_ARRAY:
+            continue
+        name = array_name(subentry)
+        hass.config_entries.async_update_subentry(
+            entry,
+            subentry,
+            title=array_title(inverters.get(subentry.data[CONF_INVERTER]), name),
+            data={**subentry.data, CONF_NAME: name},
+        )
+
 
 def array_from_data(name: str, data: dict[str, Any]) -> PanelArray:
     """Build a PanelArray from array subentry data."""
@@ -59,6 +105,7 @@ def data_from_array(array: PanelArray, inverter_id: str) -> dict[str, Any]:
     s = array.settings
     uses_area = s["cellsArea"] > 0 and s["cellsEfficiency"] > 0
     return {
+        CONF_NAME: array.name,
         CONF_INVERTER: inverter_id,
         CONF_SIZE_MODE: "area" if uses_area else "power",
         CONF_CELLS_MAX_POWER: s["cellsMaxPower"],
@@ -100,11 +147,11 @@ def site_from_entry(entry: ConfigEntry) -> tuple[Site, dict[str, str]]:
         if inverter is None:
             _LOGGER.warning(
                 "Array %s of site %s has no inverter (was it removed?); it is ignored",
-                subentry.title,
+                array_name(subentry),
                 entry.title,
             )
             continue
-        inverter.arrays.append(array_from_data(subentry.title, dict(subentry.data)))
+        inverter.arrays.append(array_from_data(array_name(subentry), dict(subentry.data)))
 
     site = Site(
         entry.data[CONF_LATITUDE],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentry,
     ConfigSubentryData,
     ConfigSubentryFlow,
     SubentryFlowResult,
@@ -39,6 +41,7 @@ from .const import (
     CONF_POWER_LIMIT,
     CONF_SHADING_ELEVATION,
     CONF_SHADING_OPACITY,
+    CONF_SITE,
     CONF_SIZE_MODE,
     CONF_TEMP_COEFF,
     CONF_TILT,
@@ -54,7 +57,7 @@ from .const import (
     SUBENTRY_ARRAY,
     SUBENTRY_INVERTER,
 )
-from .model import data_from_array
+from .model import SEPARATOR, array_name, array_title, data_from_array, inverter_titles
 from .solxpect.PanelArray import maxSunElevationPerBin
 from .solxpect.SolarPowerPlant import SolarPowerPlant
 from .solxpect.app_import import read_app_plants, sites_from_app_plants
@@ -100,6 +103,34 @@ def _read_plants(hass: HomeAssistant, file_id: str) -> list[dict[str, Any]]:
     """Read the plants of an uploaded app backup (runs in the executor)."""
     with process_uploaded_file(hass, file_id) as path:
         return read_app_plants(path)
+
+
+def _sites(hass: HomeAssistant) -> dict[str, ConfigEntry]:
+    """All sites by entry_id."""
+    return {e.entry_id: e for e in hass.config_entries.async_entries(DOMAIN, include_ignore=False)}
+
+
+@callback
+def _move_subentries(
+    hass: HomeAssistant,
+    source: ConfigEntry,
+    target: ConfigEntry,
+    moves: list[tuple[ConfigSubentry, str, dict[str, Any]]],
+) -> None:
+    """Move subentries to another site with new titles and data; both sites reload."""
+    for subentry, title, data in moves:
+        hass.config_entries.async_add_subentry(
+            target,
+            ConfigSubentry(
+                data=MappingProxyType(data),
+                subentry_type=subentry.subentry_type,
+                title=title,
+                unique_id=subentry.unique_id,
+            ),
+        )
+    # removing a subentry also removes its devices and entities from the source site
+    for subentry, _, _ in moves:
+        hass.config_entries.async_remove_subentry(source, subentry.subentry_id)
 
 
 def _plant_label(plant: dict[str, Any]) -> str:
@@ -231,7 +262,7 @@ class SolxpectSitesConfigFlow(ConfigFlow, domain=DOMAIN):
                 subentries.append(
                     ConfigSubentryData(
                         subentry_type=SUBENTRY_ARRAY,
-                        title=array.name,
+                        title=array_title(inverter.name, array.name),
                         unique_id=None,
                         data=data_from_array(array, inverter_id),
                     )
@@ -281,36 +312,63 @@ class InverterSubentryFlow(ConfigSubentryFlow):
 
     async def _async_step_inverter(self, user_input, subentry) -> SubentryFlowResult:
         entry = self._get_entry()
+        sites = _sites(self.hass)
         errors: dict[str, str] = {}
         if user_input is not None:
             name = user_input.pop(CONF_NAME).strip()
+            target = sites.get(user_input.pop(CONF_SITE, entry.entry_id), entry)
             taken = {
                 s.title
-                for s in entry.subentries.values()
+                for s in target.subentries.values()
                 if s.subentry_type == SUBENTRY_INVERTER and s is not subentry
             }
             if name in taken or name == "total":
                 errors[CONF_NAME] = "name_exists"
             elif subentry is None:
                 return self.async_create_entry(title=name, data=user_input, unique_id=uuid4().hex)
-            else:
+            elif target is entry:
+                # the reload puts the new name into the titles of its arrays
                 return self.async_update_and_abort(entry, subentry, title=name, data=user_input)
+            else:
+                return self._async_move(entry, target, subentry, name, user_input)
 
         defaults = {CONF_NAME: "", CONF_EFFICIENCY: DEFAULT_INVERTER_EFFICIENCY, CONF_POWER_LIMIT: None}
         if subentry is not None:
             defaults = {CONF_NAME: subentry.title, **subentry.data}
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_NAME, default=defaults[CONF_NAME]): str,
-                vol.Required(CONF_EFFICIENCY, default=defaults[CONF_EFFICIENCY]): _number(50, 100, unit="%"),
-                vol.Required(
-                    CONF_POWER_LIMIT,
-                    description={"suggested_value": defaults[CONF_POWER_LIMIT]},
-                ): _number(1, 1_000_000, unit="W"),
-            }
-        )
+        fields: dict[Any, Any] = {
+            vol.Required(CONF_NAME, default=defaults[CONF_NAME]): str,
+            vol.Required(CONF_EFFICIENCY, default=defaults[CONF_EFFICIENCY]): _number(50, 100, unit="%"),
+            vol.Required(
+                CONF_POWER_LIMIT,
+                description={"suggested_value": defaults[CONF_POWER_LIMIT]},
+            ): _number(1, 1_000_000, unit="W"),
+        }
+        if subentry is not None and len(sites) > 1:
+            fields[vol.Required(CONF_SITE, default=entry.entry_id)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=site_id, label=site.title)
+                        for site_id, site in sites.items()
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
         return self.async_show_form(
-            step_id="reconfigure" if subentry else "user", data_schema=schema, errors=errors
+            step_id="reconfigure" if subentry else "user", data_schema=vol.Schema(fields), errors=errors
+        )
+
+    def _async_move(self, entry, target, subentry, name, data) -> SubentryFlowResult:
+        """Move the inverter and its arrays to another site."""
+        arrays = [
+            s
+            for s in entry.subentries.values()
+            if s.subentry_type == SUBENTRY_ARRAY and s.data[CONF_INVERTER] == subentry.unique_id
+        ]
+        moves = [(subentry, name, data)]
+        moves += [(a, array_title(name, array_name(a)), {**a.data, CONF_NAME: array_name(a)}) for a in arrays]
+        _move_subentries(self.hass, entry, target, moves)
+        return self.async_abort(
+            reason="moved", description_placeholders={"site": target.title, "arrays": str(len(arrays))}
         )
 
 
@@ -343,86 +401,151 @@ def _direction_text(elevation: float, opacity: float) -> str:
     return f"{elevation:g}" if opacity == 100 else f"{elevation:g}/{opacity:g}"
 
 
+def _inverter_selector(labels: dict[str, str]) -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[selector.SelectOptionDict(value=uid, label=label) for uid, label in labels.items()],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _orientation_fields(defaults: dict[str, Any]) -> dict[Any, Any]:
+    return {
+        vol.Required(CONF_SIZE_MODE, default=defaults[CONF_SIZE_MODE]): _select(SIZE_MODES, "size_mode"),
+        vol.Required(CONF_AZIMUTH, default=defaults[CONF_AZIMUTH]): _number(0, 360, unit="°"),
+        vol.Required(CONF_TILT, default=defaults[CONF_TILT]): _number(0, 90, unit="°"),
+    }
+
+
+def _name_taken(site: ConfigEntry, inverter_uid: str, name: str, subentry: ConfigSubentry | None) -> bool:
+    """Whether another array of the inverter already has this name."""
+    return any(
+        s.subentry_type == SUBENTRY_ARRAY
+        and s.data.get(CONF_INVERTER) == inverter_uid
+        and (subentry is None or s.subentry_id != subentry.subentry_id)
+        and array_name(s) == name
+        for s in site.subentries.values()
+    )
+
+
 class ArraySubentryFlow(ConfigSubentryFlow):
-    """Add or change a panel array, in three steps: basics, details, shading."""
+    """Add a panel array in three steps (basics, details, shading), or change one part of it."""
 
     def __init__(self) -> None:
         """Initialize the flow."""
         self._data: dict[str, Any] = {}
         self._name = ""
+        self._needs_shading = True  # when adding, and after changing the orientation
 
     def _subentry(self):
         return self._get_reconfigure_subentry() if self.source == SOURCE_RECONFIGURE else None
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        """Add a panel array."""
-        return await self._async_step_basics(user_input)
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Change a panel array."""
-        return await self._async_step_basics(user_input)
-
-    async def _async_step_basics(self, user_input) -> SubentryFlowResult:
+    def _async_save(self) -> SubentryFlowResult:
         entry = self._get_entry()
+        data = {**self._data, CONF_NAME: self._name}
+        title = array_title(inverter_titles(entry).get(data[CONF_INVERTER]), self._name)
         subentry = self._subentry()
-        inverters = {
-            s.unique_id: s.title
-            for s in entry.subentries.values()
-            if s.subentry_type == SUBENTRY_INVERTER
-        }
+        if subentry is None:
+            return self.async_create_entry(title=title, data=data)
+        return self.async_update_and_abort(entry, subentry, title=title, data=data)
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Add a panel array: name, inverter and orientation."""
+        entry = self._get_entry()
+        inverters = inverter_titles(entry)
         if not inverters:
             return self.async_abort(reason="no_inverters")
 
         errors: dict[str, str] = {}
         if user_input is not None:
             name = user_input.pop(CONF_NAME).strip()
-            taken = {
-                s.title
-                for s in entry.subentries.values()
-                if s.subentry_type == SUBENTRY_ARRAY
-                and s.data.get(CONF_INVERTER) == user_input[CONF_INVERTER]
-                and s is not subentry
-            }
-            if name in taken:
+            if _name_taken(entry, user_input[CONF_INVERTER], name, None):
                 errors[CONF_NAME] = "name_exists"
             else:
                 self._name = name
                 self._data.update(user_input)
                 return await self.async_step_details()
 
-        defaults: dict[str, Any] = {
-            CONF_NAME: "",
-            CONF_INVERTER: next(iter(inverters)),
-            CONF_SIZE_MODE: "power",
-            CONF_AZIMUTH: 180,
-            CONF_TILT: 30,
-        }
-        if subentry is not None:
-            defaults = {CONF_NAME: subentry.title, **subentry.data}
-            if defaults[CONF_INVERTER] not in inverters:
-                defaults[CONF_INVERTER] = next(iter(inverters))
-            self._data = dict(subentry.data)
         schema = vol.Schema(
             {
-                vol.Required(CONF_NAME, default=defaults[CONF_NAME]): str,
-                vol.Required(CONF_INVERTER, default=defaults[CONF_INVERTER]): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            selector.SelectOptionDict(value=uid, label=title)
-                            for uid, title in inverters.items()
-                        ],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(CONF_SIZE_MODE, default=defaults[CONF_SIZE_MODE]): _select(SIZE_MODES, "size_mode"),
-                vol.Required(CONF_AZIMUTH, default=defaults[CONF_AZIMUTH]): _number(0, 360, unit="°"),
-                vol.Required(CONF_TILT, default=defaults[CONF_TILT]): _number(0, 90, unit="°"),
+                vol.Required(CONF_NAME, default=""): str,
+                vol.Required(CONF_INVERTER, default=next(iter(inverters))): _inverter_selector(inverters),
+                **_orientation_fields({CONF_SIZE_MODE: "power", CONF_AZIMUTH: 180, CONF_TILT: 30}),
             }
         )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Change a panel array: choose which part."""
+        subentry = self._get_reconfigure_subentry()
+        self._data = dict(subentry.data)
+        self._name = array_name(subentry)
+        self._needs_shading = False
+        return self.async_show_menu(
+            step_id="reconfigure", menu_options=["name_inverter", "panels", "shading"]
+        )
+
+    async def async_step_name_inverter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Rename the array or connect it to another inverter, also one of another site."""
+        entry = self._get_entry()
+        subentry = self._get_reconfigure_subentry()
+        sites = _sites(self.hass)
+        inverters = {  # unique_id -> (site, inverter title)
+            uid: (site, title) for site in sites.values() for uid, title in inverter_titles(site).items()
+        }
+        if not inverters:
+            return self.async_abort(reason="no_inverters")
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = user_input[CONF_NAME].strip()
+            uid = user_input[CONF_INVERTER]
+            target, inverter_title = inverters[uid]
+            if _name_taken(target, uid, name, subentry):
+                errors[CONF_NAME] = "name_exists"
+            else:
+                self._name = name
+                self._data[CONF_INVERTER] = uid
+                if target is entry:
+                    return self._async_save()
+                data = {**self._data, CONF_NAME: name}
+                _move_subentries(
+                    self.hass, entry, target, [(subentry, array_title(inverter_title, name), data)]
+                )
+                return self.async_abort(reason="moved", description_placeholders={"site": target.title})
+
+        current = self._data[CONF_INVERTER]
+        if current not in inverters:
+            current = next(iter(inverter_titles(entry)), next(iter(inverters)))
+        labels = {
+            uid: f"{site.title}{SEPARATOR}{title}" if len(sites) > 1 else title
+            for uid, (site, title) in inverters.items()
+        }
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_NAME, default=self._name): str,
+                vol.Required(CONF_INVERTER, default=current): _inverter_selector(labels),
+            }
+        )
+        return self.async_show_form(step_id="name_inverter", data_schema=schema, errors=errors)
+
+    async def async_step_panels(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Change the size mode and orientation, then the details."""
+        if user_input is not None:
+            # other directions may now be in front of the panel
+            self._needs_shading = (user_input[CONF_AZIMUTH], user_input[CONF_TILT]) != (
+                self._data[CONF_AZIMUTH],
+                self._data[CONF_TILT],
+            )
+            self._data.update(user_input)
+            return await self.async_step_details()
         return self.async_show_form(
-            step_id="reconfigure" if subentry else "user", data_schema=schema, errors=errors
+            step_id="panels", data_schema=vol.Schema(_orientation_fields(self._data))
         )
 
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
@@ -435,7 +558,9 @@ class ArraySubentryFlow(ConfigSubentryFlow):
             else:
                 self._data[CONF_CELLS_AREA] = 0
                 self._data[CONF_CELLS_EFFICIENCY] = 0
-            return await self.async_step_shading()
+            if self._needs_shading:
+                return await self.async_step_shading()
+            return self._async_save()
 
         d = self._data
         tilt = d[CONF_TILT]
@@ -486,11 +611,9 @@ class ArraySubentryFlow(ConfigSubentryFlow):
                 elevation.append(e)
                 opacity.append(o)
             if not errors:
-                data = {**self._data, CONF_SHADING_ELEVATION: elevation, CONF_SHADING_OPACITY: opacity}
-                subentry = self._subentry()
-                if subentry is None:
-                    return self.async_create_entry(title=self._name, data=data)
-                return self.async_update_and_abort(self._get_entry(), subentry, title=self._name, data=data)
+                self._data[CONF_SHADING_ELEVATION] = elevation
+                self._data[CONF_SHADING_OPACITY] = opacity
+                return self._async_save()
 
         stored = list(
             zip(

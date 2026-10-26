@@ -95,5 +95,5 @@ class SolxpectSitesCoordinator(DataUpdateCoordinator[ForecastData]):
             return await self.hass.async_add_executor_job(
                 _calculate, self.site, dt_util.as_utc(start), dt_util.as_utc(end), self.interval
             )
-        except Exception as err:  # requests, pandas and pvlib raise many kinds of errors
+        except Exception as err:  # requests and numpy raise many kinds of errors
             raise UpdateFailed(f"Forecast for {self.config_entry.title} failed: {err}") from err

@@ -86,12 +86,21 @@
           "data": {
             "name": "Name",
             "efficiency": "Efficiency",
-            "power_limit": "AC power limit"
+            "power_limit": "AC power limit",
+            "site": "Site"
+          },
+          "data_description": {
+            "power_limit": "The inverter limits the summed power of all its arrays to this value.",
+            "site": "Choosing another site moves the inverter there, together with its panel arrays."
           }
         }
       },
       "error": {
         "name_exists": "An inverter with this name already exists."
+      },
+      "abort": {
+        "reconfigure_successful": "The inverter was changed.",
+        "moved": "The inverter and its {arrays} panel arrays were moved to the site \"{site}\"."
       }
     },
     "array": {
@@ -117,13 +126,34 @@
           }
         },
         "reconfigure": {
-          "title": "Panel array",
+          "title": "Change panel array",
+          "menu_options": {
+            "name_inverter": "Name and inverter",
+            "panels": "Orientation, size and panel values",
+            "shading": "Shading"
+          }
+        },
+        "name_inverter": {
+          "title": "Name and inverter",
           "data": {
             "name": "Name",
-            "inverter": "Inverter",
+            "inverter": "Inverter"
+          },
+          "data_description": {
+            "inverter": "Choosing an inverter of another site moves the array to that site."
+          }
+        },
+        "panels": {
+          "title": "Orientation and size",
+          "description": "If you change azimuth or tilt, the shading step follows, because other directions may now be in front of the panel.",
+          "data": {
             "size_mode": "Panel size given as",
             "azimuth": "Azimuth",
             "tilt": "Tilt"
+          },
+          "data_description": {
+            "azimuth": "Direction the panels face: 0 = north, 90 = east, 180 = south, 270 = west.",
+            "tilt": "0 = horizontal, 90 = vertical."
           }
         },
         "details": {
@@ -147,7 +177,7 @@
         },
         "shading": {
           "title": "Shading",
-          "description": "For each direction (0° = north, 90° = east, 180° = south): the elevation of obstacles in degrees, and how much of the direct light they block in %, written as **elevation/opacity**, e.g. `35/100` or `20/60`. A single number means an opaque obstacle (`35` = `35/100`); `0` means no obstacle.\n\nOnly directions where the sun can stand in front of the panel are listed. The highest sun elevation there during the year (obstacles above it don't matter):\n{sun}\n\nThe other directions are prefilled as blocked (`90`) in the collapsed section.",
+          "description": "For each direction (0° = north, 90° = east, 180° = south): the elevation of obstacles in degrees, and how much of the direct light they block in %, written as **elevation/opacity**, e.g. `35/100` or `20/60`. A single number means an opaque obstacle (`35` = `35/100`); `0` means no obstacle.\n\nOnly directions where the sun can stand in front of the panel are listed. The highest sun elevation there during the year (obstacles above it don't matter):\n{sun}\n\nThe other directions are prefilled as blocked (`90`) in the collapsed section.\n\nWhen you change an array, its saved values are prefilled.",
           "data": {
             "dir_000": "0–10° (N)",
             "dir_010": "10–20° (N)",
@@ -236,7 +266,9 @@
         "invalid_direction": "Use elevation/opacity, e.g. 35/100: elevation 0–90°, opacity 0–100 %."
       },
       "abort": {
-        "no_inverters": "Add an inverter to the site first."
+        "no_inverters": "Add an inverter to the site first.",
+        "reconfigure_successful": "The panel array was changed.",
+        "moved": "The panel array was moved to the site \"{site}\"."
       }
     }
   },

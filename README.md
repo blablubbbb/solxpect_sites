@@ -35,9 +35,16 @@ Each panel array asks for:
 | Albedo | Ground reflectivity: grass ~0.2, asphalt ~0.1, snow 0.6–0.8 |
 | Shading | Per 10° direction: obstacle elevation and opacity as `elevation/opacity`, e.g. `35/100` (a single number means opaque, `0` no obstacle). Only directions the sun can reach in front of the panel are shown; the rest are prefilled as blocked |
 
+Panel arrays are listed as **"inverter › array"**, so the site's page shows them grouped by inverter.
+
+## Changing and moving
+
+- **Panel array** (⚙): choose **Name and inverter**, **Orientation, size and panel values**, or **Shading**. Only the chosen part is asked for; a new azimuth or tilt also asks for the shading again. Choosing an inverter of another site moves the array there.
+- **Inverter** (⚙): with more than one site, the **Site** field moves the inverter, together with its arrays, to another site. Its sensors keep their entity IDs.
+
 ## Sensors
 
-For the site (total) and for each inverter: **Power now** (W), **Energy today**, **Energy remaining today** and **Energy tomorrow** (kWh). The energy sensors have the forecast per interval as attribute `intervals`.
+For the site (total) and for each inverter: **Power now** (W), **Energy today**, **Energy remaining today** and **Energy tomorrow** (kWh). The energy sensors have the forecast per interval as attribute `intervals`. The site's device ("Total of all inverters") belongs to no inverter, so Home Assistant lists it under "Devices that don't belong to a sub-entry".
 
 ## Development
 
