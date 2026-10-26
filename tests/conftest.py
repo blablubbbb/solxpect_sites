@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import timedelta
 import sqlite3
 import sys
 from unittest.mock import patch
 import zipfile
 
 import numpy as np
-import pandas as pd
 import pytest
 import pytest_socket
 
@@ -33,19 +31,17 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 def fake_weather(latitude, longitude, start_dt, end_dt, intervalSeconds=3600, historical=False):
-    """Clear-sky-like weather: irradiance follows the hour of day, labels are interval ends."""
-    times = pd.date_range(start_dt, end_dt, freq=timedelta(seconds=intervalSeconds), tz="UTC")
-    hours = np.asarray(times.hour + times.minute / 60)
+    """Clear-sky-like weather like fetch_open_meteo_data returns it ("time" = interval end)."""
+    times = np.arange(int(start_dt.timestamp()), int(end_dt.timestamp()) + 1, intervalSeconds)
+    hours = (times % 86400) / 3600
     sun = np.clip(np.clip(hours - 6, 0, 12) * np.clip(18 - hours, 0, 12) / 36, 0, 1)
-    return pd.DataFrame(
-        {
-            "time": times,
-            "direct_normal_irradiance": 700 * sun,
-            "diffuse_radiation": 120 * sun,
-            "shortwave_radiation": 600 * sun,
-            "temperature_2m": 15.0,
-        }
-    )
+    return {
+        "time": times,
+        "direct_normal_irradiance": 700 * sun,
+        "diffuse_radiation": 120 * sun,
+        "shortwave_radiation": 600 * sun,
+        "temperature_2m": np.full(len(times), 15.0),
+    }
 
 
 @pytest.fixture(autouse=True)

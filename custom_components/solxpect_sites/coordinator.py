@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import logging
+import math
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -55,12 +56,16 @@ class ForecastData:
 
 def _calculate(site: Site, start: datetime, end: datetime, interval: timedelta) -> ForecastData:
     """Fetch the weather and calculate the site (runs in the executor)."""
-    power = site.forecast(start, end, int(interval.total_seconds()))
+    result = site.forecast(start, end, int(interval.total_seconds()))
     # the library labels intervals by their end; HA and the sensors use the start
-    starts = [ts.to_pydatetime() - interval for ts in power.index]
+    starts = [datetime.fromtimestamp(int(t), tz=UTC) - interval for t in result.times]
+    # Open-Meteo sends null for values it doesn't have; count those intervals as no power
     return ForecastData(
         starts=starts,
-        power={column: [float(w) for w in power[column]] for column in power.columns},
+        power={
+            name: [0.0 if math.isnan(w) else float(w) for w in values]
+            for name, values in result.columns.items()
+        },
         interval=interval,
     )
 

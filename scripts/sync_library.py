@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = ROOT / "custom_components" / "solxpect_sites" / "solxpect"
 FILES = ["__init__.py", "PanelArray.py", "Inverter.py", "Site.py", "SolarPowerPlant.py",
-         "forecast.py", "app_import.py"]
+         "forecast.py", "app_import.py", "sunposition.py"]
 
 
 def main():
